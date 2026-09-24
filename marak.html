@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Marak</title>
+<link rel="manifest" href="data:application/json,{%22name%22:%22Marak%22,%22short_name%22:%22Marak%22,%22start_url%22:%22.%22,%22display%22:%22standalone%22,%22background_color%22:%22%230a0a0f%22,%22theme_color%22:%22%230a0a0f%22}">
+<style>
+  :root{
+    --bg:#0a0a0f; --panel:#12121a; --border:#232333;
+    --text:#e8e8f0; --muted:#8a8aa0; --accent:#5b8cff;
+    --danger:#ff5b7a; --ok:#4ade80;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    height:100vh; display:flex; flex-direction:column;
+  }
+  header{
+    padding:16px 20px; border-bottom:1px solid var(--border);
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+  }
+  header h1{font-size:18px; margin:0; font-weight:600; letter-spacing:0.3px}
+  header h1 span{color:var(--accent)}
+  #status{font-size:12px; color:var(--muted)}
+  #status.listening{color:var(--accent)}
+  #status.thinking{color:#f0b429}
+  #headerBtns{display:flex; align-items:center; gap:8px}
+  .iconBtn{
+    background:var(--panel); border:1px solid var(--border); color:var(--text);
+    width:34px; height:34px; border-radius:8px; display:flex; align-items:center;
+    justify-content:center; font-size:15px; cursor:pointer;
+  }
+  .iconBtn.hidden{display:none !important}
+
+  #log{flex:1; overflow-y:auto; padding:16px 20px; display:flex; flex-direction:column; gap:10px}
+  .msg{max-width:80%; padding:10px 14px; border-radius:12px; line-height:1.4; font-size:14px}
+  .msg.user{align-self:flex-end; background:var(--accent); color:#fff; border-bottom-right-radius:3px}
+  .msg.ai{align-self:flex-start; background:var(--panel); border:1px solid var(--border); border-bottom-left-radius:3px}
+  .msg.tool{align-self:flex-start; background:transparent; border:1px dashed var(--border); color:var(--muted); font-size:12px; font-family:monospace}
+  .msg.err{align-self:flex-start; background:#2a1218; border:1px solid var(--danger); color:var(--danger); font-size:13px}
+
+  #confirmBar{
+    display:none; padding:14px 20px; background:#1a1508; border-top:1px solid #f0b429;
+    align-items:center; gap:12px; flex-wrap:wrap;
+  }
+  #confirmBar.show{display:flex}
+  #confirmBar span{font-size:13px; flex:1; min-width:200px}
+  #confirmBar button{
+    padding:8px 16px; border-radius:8px; border:none; font-size:13px; font-weight:600; cursor:pointer;
+  }
+  #confirmAllow{background:var(--ok); color:#04240f}
+  #confirmDeny{background:var(--danger); color:#2a0510}
+
+  #inputBar{
+    display:flex; gap:8px; padding:14px 20px; border-top:1px solid var(--border);
+    background:var(--panel);
+  }
+  #textInput{
+    flex:1; background:var(--bg); border:1px solid var(--border); color:var(--text);
+    padding:10px 14px; border-radius:20px; font-size:14px; outline:none;
+  }
+  #textInput:focus{border-color:var(--accent)}
+  #inputBar button{
+    width:42px; height:42px; border-radius:50%; border:none; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; font-size:16px;
+  }
+  #sendBtn{background:var(--accent); color:#fff}
+  #micBtn{background:var(--panel); border:1px solid var(--border); color:var(--text)}
+  #micBtn.active{background:var(--danger); color:#fff; border-color:var(--danger)}
+
+  #setupOverlay{
+    position:fixed; inset:0; background:var(--bg); display:flex; align-items:center;
+    justify-content:center; padding:24px; z-index:10;
+  }
+  #setupOverlay .box{max-width:340px; width:100%}
+  #setupOverlay h2{margin:0 0 8px}
+  #setupOverlay p{color:var(--muted); font-size:13px; line-height:1.5}
+  #setupOverlay input{
+    width:100%; padding:12px; margin-top:12px; border-radius:8px; border:1px solid var(--border);
+    background:var(--panel); color:var(--text); font-size:14px;
+  }
+  #setupOverlay button{
+    width:100%; margin-top:14px; padding:12px; border-radius:8px; border:none;
+    background:var(--accent); color:#fff; font-weight:600; font-size:14px; cursor:pointer;
+  }
+  .hidden{display:none !important}
+</style>
+</head>
+<body>
+
+<div id="setupOverlay">
+  <div class="box">
+    <h2>Marak — setup</h2>
+    <p>Enter your Groq API key to start. Stored only in this browser (localStorage), never sent anywhere else.</p>
+    <input id="apiKeyInput" type="password" placeholder="gsk_...">
+    <button id="saveKeyBtn">Start</button>
+  </div>
+</div>
+
+<header>
+  <h1>Ma<span>rak</span></h1>
+  <div id="headerBtns">
+    <div id="status">idle</div>
+    <button id="shareBtn" class="iconBtn" title="Share">⇪</button>
+    <button id="installBtn" class="iconBtn hidden" title="Install app">⬇</button>
+  </div>
+</header>
+
+<div id="iosHint" class="hidden" style="padding:10px 20px; background:#12121a; border-bottom:1px solid var(--border); font-size:12px; color:var(--muted);">
+  To install: tap the Share icon in Safari, then "Add to Home Screen".
+  <button id="iosHintClose" style="float:right; background:none; border:none; color:var(--muted); cursor:pointer;">✕</button>
+</div>
+
+<div id="log"></div>
+
+<div id="confirmBar">
+  <span id="confirmText"></span>
+  <button id="confirmAllow">Allow</button>
+  <button id="confirmDeny">Deny</button>
+</div>
+
+<div id="inputBar">
+  <button id="micBtn" title="Voice input">🎤</button>
+  <input id="textInput" type="text" placeholder="Ask Marak anything...">
+  <button id="sendBtn" title="Send">➤</button>
+</div>
+
+<script>
+/* ============================================================
+   MARAK — AI BRAIN CORE
+   Single-file PWA. Tool-calling loop over Groq's OpenAI-compatible API.
+   Every new capability = one more entry in TOOLS. Nothing else changes.
+   ============================================================ */
+
+const GROQ_MODEL = "llama-3.3-70b-versatile";
+let API_KEY = localStorage.getItem("marak_groq_key") || "";
+
+const logEl = document.getElementById("log");
+const statusEl = document.getElementById("status");
+const textInput = document.getElementById("textInput");
+
+let conversation = JSON.parse(localStorage.getItem("marak_memory") || "[]");
+if (conversation.length === 0) {
+  conversation.push({
+    role: "system",
+    content: "You are Marak, a personal AI assistant built by Rocky. Be concise and direct. Use tools when the user's request maps to one. Never claim to have done something you didn't actually call a tool for."
+  });
+}
+
+function saveMemory() {
+  // keep last 40 turns so localStorage doesn't blow up
+  const trimmed = [conversation[0], ...conversation.slice(-40)];
+  localStorage.setItem("marak_memory", JSON.stringify(trimmed));
+}
+
+function addMsg(role, text) {
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  div.textContent = text;
+  logEl.appendChild(div);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function setStatus(s, cls) {
+  statusEl.textContent = s;
+  statusEl.className = cls || "";
+}
+
+/* ============================================================
+   TOOL REGISTRY
+   Add new capabilities here. Each tool = one object.
+   `sensitive: true` forces a confirm prompt before execute() runs.
+   This is the ONLY place you touch to add computer-control,
+   phone-control, car-mode, trading, smart-home, vision, etc.
+   ============================================================ */
+
+const TOOLS = {
+  get_time: {
+    sensitive: false,
+    schema: {
+      type: "function",
+      function: {
+        name: "get_time",
+        description: "Get the current local date and time.",
+        parameters: { type: "object", properties: {} }
+      }
+    },
+    execute: async () => new Date().toString()
+  },
+
+  open_url: {
+    sensitive: true, // opening arbitrary URLs — confirm first
+    schema: {
+      type: "function",
+      function: {
+        name: "open_url",
+        description: "Open a URL in a new browser tab.",
+        parameters: {
+          type: "object",
+          properties: { url: { type: "string", description: "Full URL to open" } },
+          required: ["url"]
+        }
+      }
+    },
+    execute: async (args) => {
+      window.open(args.url, "_blank");
+      return `Opened ${args.url}`;
+    }
+  },
+
+  remember_fact: {
+    sensitive: false,
+    schema: {
+      type: "function",
+      function: {
+        name: "remember_fact",
+        description: "Save a short fact about the user for future conversations.",
+        parameters: {
+          type: "object",
+          properties: { fact: { type: "string" } },
+          required: ["fact"]
+        }
+      }
+    },
+    execute: async (args) => {
+      const facts = JSON.parse(localStorage.getItem("marak_facts") || "[]");
+      facts.push({ fact: args.fact, ts: Date.now() });
+      localStorage.setItem("marak_facts", JSON.stringify(facts));
+      return `Remembered: ${args.fact}`;
+    }
+  }
+
+  generate_file: {
+    sensitive: false,
+    schema: {
+      type: "function",
+      function: {
+        name: "generate_file",
+        description: "Write code to a downloadable file (an app, script, HTML page, etc). Use this whenever the user asks you to build, create, or generate an app, tool, page, or script. Put the FULL file content in `content` — never a partial snippet.",
+        parameters: {
+          type: "object",
+          properties: {
+            filename: { type: "string", description: "e.g. myapp.html, script.py, tool.js" },
+            content: { type: "string", description: "The complete file contents" }
+          },
+          required: ["filename", "content"]
+        }
+      }
+    },
+    execute: async (args) => {
+      const blob = new Blob([args.content], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = args.filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      return `Generated and downloaded ${args.filename} (${args.content.length} chars)`;
+    }
+  }
+
+  // Next modules plug in exactly like the above, e.g.:
+  // control_car_nav: { sensitive:true, schema:{...}, execute: async(args)=>{...} }
+  // smart_home_toggle: { sensitive:true, schema:{...}, execute: async(args)=>{...} }
+};
+
+function toolSchemas() {
+  return Object.values(TOOLS).map(t => t.schema);
+}
+
+/* ============================================================
+   PERMISSION GATE
+   Sensitive tool calls pause here until the user taps Allow/Deny.
+   ============================================================ */
+
+function requestConfirm(toolName, args) {
+  return new Promise((resolve) => {
+    const bar = document.getElementById("confirmBar");
+    const text = document.getElementById("confirmText");
+    text.textContent = `Marak wants to run: ${toolName}(${JSON.stringify(args)})`;
+    bar.classList.add("show");
+
+    const allowBtn = document.getElementById("confirmAllow");
+    const denyBtn = document.getElementById("confirmDeny");
+
+    function cleanup(result) {
+      bar.classList.remove("show");
+      allowBtn.onclick = null;
+      denyBtn.onclick = null;
+      resolve(result);
+    }
+    allowBtn.onclick = () => cleanup(true);
+    denyBtn.onclick = () => cleanup(false);
+  });
+}
+
+/* ============================================================
+   LLM CALL + TOOL LOOP
+   ============================================================ */
+
+async function callGroq(messages) {
+  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${API_KEY}`
+    },
+    body: JSON.stringify({
+      model: GROQ_MODEL,
+      messages,
+      tools: toolSchemas(),
+      tool_choice: "auto"
+    })
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Groq API error ${res.status}: ${errText.slice(0,200)}`);
+  }
+  return res.json();
+}
+
+async function handleUserMessage(userText) {
+  conversation.push({ role: "user", content: userText });
+  addMsg("user", userText);
+  saveMemory();
+
+  setStatus("thinking...", "thinking");
+
+  try {
+    let data = await callGroq(conversation);
+    let msg = data.choices[0].message;
+
+    // Tool-call loop: keep executing tools until the model returns plain text
+    while (msg.tool_calls && msg.tool_calls.length > 0) {
+      conversation.push(msg);
+
+      for (const call of msg.tool_calls) {
+        const toolName = call.function.name;
+        const args = JSON.parse(call.function.arguments || "{}");
+        const tool = TOOLS[toolName];
+
+        let resultText;
+        if (!tool) {
+          resultText = `Error: unknown tool ${toolName}`;
+        } else {
+          addMsg("tool", `→ ${toolName}(${JSON.stringify(args)})`);
+
+          if (tool.sensitive) {
+            const allowed = await requestConfirm(toolName, args);
+            if (!allowed) {
+              resultText = "User denied permission for this action.";
+              addMsg("tool", `✗ denied: ${toolName}`);
+            } else {
+              resultText = await tool.execute(args);
+              addMsg("tool", `✓ ${resultText}`);
+            }
+          } else {
+            resultText = await tool.execute(args);
+            addMsg("tool", `✓ ${resultText}`);
+          }
+        }
+
+        conversation.push({
+          role: "tool",
+          tool_call_id: call.id,
+          content: resultText
+        });
+      }
+
+      setStatus("thinking...", "thinking");
+      data = await callGroq(conversation);
+      msg = data.choices[0].message;
+    }
+
+    conversation.push(msg);
+    addMsg("ai", msg.content);
+    speak(msg.content);
+    saveMemory();
+    setStatus("idle");
+
+  } catch (err) {
+    addMsg("err", err.message);
+    setStatus("error", "");
+  }
+}
+
+/* ============================================================
+   VOICE I/O — wake word + STT + TTS
+   ============================================================ */
+
+let recognizing = false;
+let recognition = null;
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+if (SpeechRecognition) {
+  recognition = new SpeechRecognition();
+  recognition.continuous = false;
+  recognition.interimResults = false;
+  recognition.lang = "en-IN";
+
+  recognition.onresult = (e) => {
+    const transcript = e.results[0][0].transcript;
+    handleUserMessage(transcript);
+  };
+  recognition.onend = () => {
+    recognizing = false;
+    document.getElementById("micBtn").classList.remove("active");
+    setStatus("idle");
+  };
+  recognition.onerror = () => {
+    recognizing = false;
+    document.getElementById("micBtn").classList.remove("active");
+    setStatus("idle");
+  };
+} else {
+  document.getElementById("micBtn").style.display = "none";
+}
+
+function speak(text) {
+  if (!("speechSynthesis" in window)) return;
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.rate = 1.05;
+  window.speechSynthesis.speak(utter);
+}
+
+document.getElementById("micBtn").addEventListener("click", () => {
+  if (!recognition) return;
+  if (recognizing) {
+    recognition.stop();
+    return;
+  }
+  recognizing = true;
+  document.getElementById("micBtn").classList.add("active");
+  setStatus("listening...", "listening");
+  recognition.start();
+});
+
+/* ============================================================
+   TEXT INPUT + SETUP
+   ============================================================ */
+
+document.getElementById("sendBtn").addEventListener("click", () => {
+  const val = textInput.value.trim();
+  if (!val) return;
+  textInput.value = "";
+  handleUserMessage(val);
+});
+
+textInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") document.getElementById("sendBtn").click();
+});
+
+const setupOverlay = document.getElementById("setupOverlay");
+if (API_KEY) setupOverlay.classList.add("hidden");
+
+document.getElementById("saveKeyBtn").addEventListener("click", () => {
+  const val = document.getElementById("apiKeyInput").value.trim();
+  if (!val) return;
+  API_KEY = val;
+  localStorage.setItem("marak_groq_key", val);
+  setupOverlay.classList.add("hidden");
+});
+
+// Restore prior conversation into the visible log
+conversation.slice(1).forEach(m => {
+  if (m.role === "user") addMsg("user", m.content);
+  else if (m.role === "assistant" && m.content) addMsg("ai", m.content);
+});
+
+/* ============================================================
+   INSTALL BUTTON (Android/Chrome) + iOS FALLBACK HINT
+   ============================================================ */
+
+let deferredInstallPrompt = null;
+const installBtn = document.getElementById("installBtn");
+const iosHint = document.getElementById("iosHint");
+
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  installBtn.classList.remove("hidden");
+});
+
+installBtn.addEventListener("click", async () => {
+  if (!deferredInstallPrompt) return;
+  deferredInstallPrompt.prompt();
+  await deferredInstallPrompt.userChoice;
+  deferredInstallPrompt = null;
+  installBtn.classList.add("hidden");
+});
+
+window.addEventListener("appinstalled", () => {
+  installBtn.classList.add("hidden");
+  deferredInstallPrompt = null;
+});
+
+// iOS Safari has no install prompt API — show manual instructions instead,
+// but only if not already installed (standalone) and not dismissed before.
+const isIOS = /iphone|ipad|ipod/.test(navigator.userAgent.toLowerCase());
+const isStandalone = window.navigator.standalone === true ||
+                      window.matchMedia("(display-mode: standalone)").matches;
+if (isIOS && !isStandalone && !localStorage.getItem("marak_ios_hint_dismissed")) {
+  iosHint.classList.remove("hidden");
+}
+document.getElementById("iosHintClose").addEventListener("click", () => {
+  iosHint.classList.add("hidden");
+  localStorage.setItem("marak_ios_hint_dismissed", "1");
+});
+
+/* ============================================================
+   SHARE BUTTON
+   ============================================================ */
+
+document.getElementById("shareBtn").addEventListener("click", async () => {
+  const shareData = {
+    title: "Marak",
+    text: "Marak — my personal AI assistant.",
+    url: window.location.href
+  };
+  if (navigator.share) {
+    try {
+      await navigator.share(shareData);
+    } catch (err) {
+      // user cancelled — no-op
+    }
+  } else {
+    // Fallback: copy link to clipboard
+    try {
+      await navigator.clipboard.writeText(shareData.url);
+      addMsg("tool", "Link copied to clipboard (share not supported on this browser)");
+    } catch (err) {
+      addMsg("err", "Could not share or copy link.");
+    }
+  }
+});
+
+/* ============================================================
+   SERVICE WORKER REGISTRATION
+   Enables offline install + network-first auto-update from GitHub.
+   sw.js must sit in the same folder as this file when deployed.
+   ============================================================ */
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./sw.js").catch((err) => {
+      console.warn("Marak: service worker registration failed", err);
+    });
+  });
+}
+</script>
+</body>
+</html>
