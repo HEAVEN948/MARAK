@@ -9,7 +9,7 @@
    ============================================================ */
 
 const CACHE_NAME = "marak-cache-v1";
-const APP_SHELL = "./marak.html"; // adjust if you rename the file
+const APP_SHELL = "./index.html"; // adjust if you rename the file
 
 self.addEventListener("install", (event) => {
   self.skipWaiting(); // activate this SW immediately, don't wait for old tabs to close
