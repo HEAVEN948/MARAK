@@ -88,6 +88,30 @@
     background:var(--accent); color:#fff; font-weight:600; font-size:14px; cursor:pointer;
   }
   .hidden{display:none !important}
+
+  #sidebarOverlay{
+    position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:20;
+  }
+  #sidebar{
+    position:fixed; top:0; left:0; bottom:0; width:78%; max-width:300px;
+    background:var(--panel); border-right:1px solid var(--border); z-index:21;
+    display:flex; flex-direction:column; padding:14px; gap:10px;
+    transform:translateX(-100%); transition:transform 0.2s ease;
+  }
+  #sidebar.open{transform:translateX(0);}
+  #newChatBtn{
+    background:var(--accent); color:#fff; border:none; border-radius:8px;
+    padding:12px; font-size:14px; font-weight:600; cursor:pointer;
+  }
+  #chatList{flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:4px;}
+  .chatItem{
+    padding:10px 12px; border-radius:8px; font-size:13px; color:var(--text);
+    cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    border:1px solid transparent;
+  }
+  .chatItem:active{background:var(--bg);}
+  .chatItem.active{background:var(--bg); border-color:var(--accent);}
+  .chatItem .chatMeta{display:block; font-size:11px; color:var(--muted); margin-top:2px;}
 </style>
 </head>
 <body>
@@ -101,8 +125,14 @@
   </div>
 </div>
 
+<div id="sidebarOverlay" class="hidden"></div>
+<div id="sidebar">
+  <button id="newChatBtn">+ New Chat</button>
+  <div id="chatList"></div>
+</div>
+
 <header>
-  <h1>Ma<span>rak</span></h1>
+  <h1><button id="menuBtn" class="iconBtn" title="Chats" style="margin-right:4px;">☰</button>Ma<span>rak</span></h1>
   <div id="headerBtns">
     <div id="status">idle</div>
     <button id="shareBtn" class="iconBtn" title="Share">⇪</button>
@@ -143,19 +173,131 @@ const logEl = document.getElementById("log");
 const statusEl = document.getElementById("status");
 const textInput = document.getElementById("textInput");
 
-let conversation = JSON.parse(localStorage.getItem("marak_memory") || "[]");
-if (conversation.length === 0) {
-  conversation.push({
-    role: "system",
-    content: "You are Marak, a personal AI assistant built by Rocky. Be concise and direct. Use tools when the user's request maps to one. Never claim to have done something you didn't actually call a tool for."
+const SYSTEM_PROMPT = "You are Marak, a personal AI assistant built by Rocky. Be concise and direct. Use tools when the user's request maps to one. Never claim to have done something you didn't actually call a tool for.";
+
+const CHATS_KEY = "marak_chats";
+const ACTIVE_KEY = "marak_active_chat_id";
+
+function loadChats() {
+  return JSON.parse(localStorage.getItem(CHATS_KEY) || "[]");
+}
+
+function saveChats(chats) {
+  // cap total chats and per-chat message count so localStorage doesn't blow up
+  const capped = chats.slice(0, 50).map(c => ({
+    ...c,
+    messages: [c.messages[0], ...c.messages.slice(-40)]
+  }));
+  localStorage.setItem(CHATS_KEY, JSON.stringify(capped));
+}
+
+function makeNewChatObj() {
+  return {
+    id: Date.now().toString(),
+    title: "New chat",
+    updatedAt: Date.now(),
+    messages: [{ role: "system", content: SYSTEM_PROMPT }]
+  };
+}
+
+let chats = loadChats();
+
+// One-time migration from the old single-conversation format
+const oldMemory = localStorage.getItem("marak_memory");
+if (oldMemory && chats.length === 0) {
+  try {
+    const oldMsgs = JSON.parse(oldMemory);
+    if (oldMsgs.length > 0) {
+      chats.push({
+        id: Date.now().toString(),
+        title: "Previous chat",
+        updatedAt: Date.now(),
+        messages: oldMsgs
+      });
+    }
+  } catch (e) {}
+  localStorage.removeItem("marak_memory");
+}
+
+if (chats.length === 0) {
+  chats.push(makeNewChatObj());
+}
+saveChats(chats);
+
+let activeChatId = localStorage.getItem(ACTIVE_KEY);
+if (!activeChatId || !chats.find(c => c.id === activeChatId)) {
+  activeChatId = chats[0].id;
+}
+localStorage.setItem(ACTIVE_KEY, activeChatId);
+
+let conversation = chats.find(c => c.id === activeChatId).messages;
+
+function saveMemory() {
+  const chat = chats.find(c => c.id === activeChatId);
+  chat.messages = conversation;
+  chat.updatedAt = Date.now();
+  // auto-title from first user message
+  if (chat.title === "New chat") {
+    const firstUserMsg = conversation.find(m => m.role === "user");
+    if (firstUserMsg) {
+      chat.title = firstUserMsg.content.slice(0, 32) + (firstUserMsg.content.length > 32 ? "…" : "");
+    }
+  }
+  saveChats(chats);
+  renderSidebar();
+}
+
+function renderLog() {
+  logEl.innerHTML = "";
+  conversation.slice(1).forEach(m => {
+    if (m.role === "user") addMsg("user", m.content);
+    else if (m.role === "assistant" && m.content) addMsg("ai", m.content);
   });
 }
 
-function saveMemory() {
-  // keep last 40 turns so localStorage doesn't blow up
-  const trimmed = [conversation[0], ...conversation.slice(-40)];
-  localStorage.setItem("marak_memory", JSON.stringify(trimmed));
+function renderSidebar() {
+  const listEl = document.getElementById("chatList");
+  listEl.innerHTML = "";
+  const sorted = [...chats].sort((a, b) => b.updatedAt - a.updatedAt);
+  sorted.forEach(chat => {
+    const item = document.createElement("div");
+    item.className = "chatItem" + (chat.id === activeChatId ? " active" : "");
+    const dateStr = new Date(chat.updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    item.innerHTML = `${chat.title}<span class="chatMeta">${dateStr}</span>`;
+    item.addEventListener("click", () => switchChat(chat.id));
+    listEl.appendChild(item);
+  });
 }
+
+function switchChat(id) {
+  activeChatId = id;
+  localStorage.setItem(ACTIVE_KEY, id);
+  conversation = chats.find(c => c.id === id).messages;
+  renderLog();
+  renderSidebar();
+  closeSidebar();
+  setStatus("idle");
+}
+
+function startNewChat() {
+  const chat = makeNewChatObj();
+  chats.unshift(chat);
+  saveChats(chats);
+  switchChat(chat.id);
+}
+
+function openSidebar() {
+  document.getElementById("sidebar").classList.add("open");
+  document.getElementById("sidebarOverlay").classList.remove("hidden");
+}
+function closeSidebar() {
+  document.getElementById("sidebar").classList.remove("open");
+  document.getElementById("sidebarOverlay").classList.add("hidden");
+}
+
+document.getElementById("menuBtn").addEventListener("click", openSidebar);
+document.getElementById("sidebarOverlay").addEventListener("click", closeSidebar);
+document.getElementById("newChatBtn").addEventListener("click", startNewChat);
 
 function addMsg(role, text) {
   const div = document.createElement("div");
@@ -467,11 +609,9 @@ document.getElementById("saveKeyBtn").addEventListener("click", () => {
   setupOverlay.classList.add("hidden");
 });
 
-// Restore prior conversation into the visible log
-conversation.slice(1).forEach(m => {
-  if (m.role === "user") addMsg("user", m.content);
-  else if (m.role === "assistant" && m.content) addMsg("ai", m.content);
-});
+// Initial render
+renderLog();
+renderSidebar();
 
 /* ============================================================
    INSTALL BUTTON (Android/Chrome) + iOS FALLBACK HINT
