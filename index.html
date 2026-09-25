@@ -112,6 +112,44 @@
   .chatItem:active{background:var(--bg);}
   .chatItem.active{background:var(--bg); border-color:var(--accent);}
   .chatItem .chatMeta{display:block; font-size:11px; color:var(--muted); margin-top:2px;}
+
+  #chatSearch{
+    background:var(--bg); border:1px solid var(--border); color:var(--text);
+    padding:8px 10px; border-radius:8px; font-size:13px; outline:none;
+  }
+  #chatSearch:focus{border-color:var(--accent)}
+  #sidebarFooter{display:flex; flex-direction:column; gap:6px; border-top:1px solid var(--border); padding-top:10px;}
+  .sidebarFooterBtn{
+    background:none; border:1px solid var(--border); color:var(--muted);
+    padding:9px; border-radius:8px; font-size:12px; cursor:pointer; text-align:left;
+  }
+  .sidebarFooterBtn:active{background:var(--bg);}
+
+  #memoryOverlay{
+    position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:30;
+    display:flex; align-items:flex-end; justify-content:center;
+  }
+  #memoryPanel{
+    background:var(--panel); border:1px solid var(--border); border-bottom:none;
+    border-radius:16px 16px 0 0; width:100%; max-width:480px; max-height:70vh;
+    display:flex; flex-direction:column; padding:16px;
+  }
+  #memoryPanel h3{margin:0 0 10px; font-size:15px; display:flex; justify-content:space-between; align-items:center;}
+  #memoryPanel h3 button{background:none; border:none; color:var(--muted); font-size:16px; cursor:pointer;}
+  #factsList{overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:8px;}
+  .factItem{
+    display:flex; justify-content:space-between; align-items:flex-start; gap:8px;
+    background:var(--bg); border:1px solid var(--border); border-radius:8px;
+    padding:10px; font-size:13px;
+  }
+  .factItem button{background:none; border:none; color:var(--danger); font-size:16px; cursor:pointer; flex-shrink:0;}
+  #noFacts{color:var(--muted); font-size:13px; text-align:center; padding:20px 0;}
+  #addFactRow{display:flex; gap:8px; margin-top:10px;}
+  #addFactInput{
+    flex:1; background:var(--bg); border:1px solid var(--border); color:var(--text);
+    padding:9px 12px; border-radius:8px; font-size:13px; outline:none;
+  }
+  #addFactBtn{background:var(--accent); color:#fff; border:none; border-radius:8px; padding:0 14px; font-size:13px; cursor:pointer;}
 </style>
 </head>
 <body>
@@ -128,7 +166,23 @@
 <div id="sidebarOverlay" class="hidden"></div>
 <div id="sidebar">
   <button id="newChatBtn">+ New Chat</button>
+  <input id="chatSearch" type="text" placeholder="Search chats...">
   <div id="chatList"></div>
+  <div id="sidebarFooter">
+    <button id="memoryBtn" class="sidebarFooterBtn">🧠 Memory</button>
+    <button id="exportBtn" class="sidebarFooterBtn">⬇ Export chats</button>
+  </div>
+</div>
+
+<div id="memoryOverlay" class="hidden">
+  <div id="memoryPanel">
+    <h3>What Marak remembers <button id="closeMemoryBtn">✕</button></h3>
+    <div id="factsList"></div>
+    <div id="addFactRow">
+      <input id="addFactInput" type="text" placeholder="Add something to remember...">
+      <button id="addFactBtn">Add</button>
+    </div>
+  </div>
 </div>
 
 <header>
@@ -257,8 +311,19 @@ function renderLog() {
 
 function renderSidebar() {
   const listEl = document.getElementById("chatList");
+  const filter = (document.getElementById("chatSearch").value || "").toLowerCase().trim();
   listEl.innerHTML = "";
-  const sorted = [...chats].sort((a, b) => b.updatedAt - a.updatedAt);
+  let sorted = [...chats].sort((a, b) => b.updatedAt - a.updatedAt);
+  if (filter) {
+    sorted = sorted.filter(chat => {
+      if (chat.title.toLowerCase().includes(filter)) return true;
+      return chat.messages.some(m => typeof m.content === "string" && m.content.toLowerCase().includes(filter));
+    });
+  }
+  if (sorted.length === 0) {
+    listEl.innerHTML = `<div style="color:var(--muted); font-size:13px; text-align:center; padding:16px 0;">No chats found</div>`;
+    return;
+  }
   sorted.forEach(chat => {
     const item = document.createElement("div");
     item.className = "chatItem" + (chat.id === activeChatId ? " active" : "");
@@ -268,6 +333,7 @@ function renderSidebar() {
     listEl.appendChild(item);
   });
 }
+document.getElementById("chatSearch").addEventListener("input", renderSidebar);
 
 function switchChat(id) {
   activeChatId = id;
@@ -298,6 +364,77 @@ function closeSidebar() {
 document.getElementById("menuBtn").addEventListener("click", openSidebar);
 document.getElementById("sidebarOverlay").addEventListener("click", closeSidebar);
 document.getElementById("newChatBtn").addEventListener("click", startNewChat);
+
+/* ============================================================
+   EXPORT / BACKUP CHATS
+   ============================================================ */
+
+document.getElementById("exportBtn").addEventListener("click", () => {
+  const blob = new Blob([JSON.stringify(chats, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `marak-chats-${new Date().toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+});
+
+/* ============================================================
+   MEMORY / FACTS PANEL
+   ============================================================ */
+
+function getFacts() {
+  return JSON.parse(localStorage.getItem("marak_facts") || "[]");
+}
+function setFacts(facts) {
+  localStorage.setItem("marak_facts", JSON.stringify(facts));
+}
+
+function renderFacts() {
+  const listEl = document.getElementById("factsList");
+  const facts = getFacts();
+  listEl.innerHTML = "";
+  if (facts.length === 0) {
+    listEl.innerHTML = `<div id="noFacts">Nothing remembered yet. Marak saves facts here when you ask it to, or you can add one manually below.</div>`;
+    return;
+  }
+  facts.forEach((f, idx) => {
+    const item = document.createElement("div");
+    item.className = "factItem";
+    item.innerHTML = `<span>${f.fact}</span><button data-idx="${idx}">✕</button>`;
+    item.querySelector("button").addEventListener("click", () => {
+      const updated = getFacts();
+      updated.splice(idx, 1);
+      setFacts(updated);
+      renderFacts();
+    });
+    listEl.appendChild(item);
+  });
+}
+
+document.getElementById("memoryBtn").addEventListener("click", () => {
+  renderFacts();
+  document.getElementById("memoryOverlay").classList.remove("hidden");
+  closeSidebar();
+});
+document.getElementById("closeMemoryBtn").addEventListener("click", () => {
+  document.getElementById("memoryOverlay").classList.add("hidden");
+});
+document.getElementById("memoryOverlay").addEventListener("click", (e) => {
+  if (e.target.id === "memoryOverlay") document.getElementById("memoryOverlay").classList.add("hidden");
+});
+document.getElementById("addFactBtn").addEventListener("click", () => {
+  const input = document.getElementById("addFactInput");
+  const val = input.value.trim();
+  if (!val) return;
+  const facts = getFacts();
+  facts.push({ fact: val, ts: Date.now() });
+  setFacts(facts);
+  input.value = "";
+  renderFacts();
+});
 
 function addMsg(role, text) {
   const div = document.createElement("div");
@@ -404,6 +541,35 @@ const TOOLS = {
       a.remove();
       URL.revokeObjectURL(url);
       return `Generated and downloaded ${args.filename} (${args.content.length} chars)`;
+    }
+  },
+
+  search_past_chats: {
+    sensitive: false,
+    schema: {
+      type: "function",
+      function: {
+        name: "search_past_chats",
+        description: "Search across ALL of the user's past chat conversations (not just the current one) for a keyword or topic. Use this when the user references something discussed before, e.g. 'what did I say about X' or 'did we talk about Y before'.",
+        parameters: {
+          type: "object",
+          properties: { query: { type: "string", description: "Keyword or phrase to search for" } },
+          required: ["query"]
+        }
+      }
+    },
+    execute: async (args) => {
+      const q = args.query.toLowerCase();
+      const matches = [];
+      chats.forEach(chat => {
+        chat.messages.forEach(m => {
+          if ((m.role === "user" || m.role === "assistant") && typeof m.content === "string" && m.content.toLowerCase().includes(q)) {
+            matches.push(`[${chat.title}] ${m.role}: ${m.content.slice(0, 150)}`);
+          }
+        });
+      });
+      if (matches.length === 0) return "No matches found in past chats.";
+      return matches.slice(0, 8).join("\n---\n");
     }
   }
 
